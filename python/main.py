@@ -1,8 +1,9 @@
 import logging
-import sys
 import os
 import os.path
-from environment import SENTRY_URL, FORMAT
+import sys
+
+from environment import SENTRY_URL
 
 root = logging.getLogger()
 root.setLevel(logging.DEBUG)
