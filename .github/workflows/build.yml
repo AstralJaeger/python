@@ -1,0 +1,125 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      qemuplatforms: amd64,arm64
+      platforms: linux/amd64,linux/arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      - name: Setup Poetry
+        uses: Gr1N/setup-poetry@v8
+
+      - name: Cache dependencies
+        id: cache-poetry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pypoetry/virtualenvs
+          key: ${{ runner.os }}-poetry
+
+      - name: Install dependencies
+        if: steps.cache-poetry.outputs.cache-hit != 'true'
+        run: poetry install
+
+      - name: Lint
+        run: |
+          poetry run flake8 --config .flake8
+          poetry run black --check --config pyproject.toml .
+          poetry run isort . --check
+
+      - name: Build Package
+        run: poetry build
+
+      - name: Get Version
+        run: |
+          echo "version=$(poetry version | awk '{print $2}')" >> $GITHUB_ENV
+          echo "version=$(poetry version | awk '{print $2}')"
+
+#       - name: Create GitHub Release
+#         uses: actions/create-release@v1
+#         id: create-release
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#        with:
+#          tag_name: v${{ env.version }}
+#          release_name: Release ${{ env.version }}
+#          draft: false
+#          prerelease: false
+
+#      - name: Release
+#        id: upload-release-asset
+#        uses: softprops/action-gh-release@v1
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#        with:
+#          files: |
+#            cve-reporter-${{ env.version }}.tar.gz
+#            Changelog.md
+#            LICENSE
+
+# Docker Build and publish
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v2
+        with:
+          platforms: ${{ env.qemuplatforms }}
+
+      - name: Setup Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Tag
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ github.repository }}
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha
+          flavor: |
+            latest=true
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Push
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          platforms: ${{ env.platforms }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ steps.meta.outputs.tags }}
+            ghcr.io/${{steps.meta.outputs.tags}}
+          labels: ${{ steps.meta.outputs.labels }}
